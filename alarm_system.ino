@@ -2,7 +2,6 @@
   Alarm system  
 */
 
-//#include <SPI.h>
 #include <UIPEthernet.h>
 
 // Enter a MAC address and IP address for your controller below.
@@ -14,7 +13,7 @@ IPAddress ip(192, 168, 2, 177);
 
 // Initialize the Ethernet server library
 // with the IP address and port you want to use
-// (port 80 is default for HTTP):
+// (port 80 is default):
 EthernetServer server(12358);
 
 const int ONOFF_LED_PIN     = 7;   // Arduino pin connected to the OUTPUT pin of on/off led
@@ -87,18 +86,6 @@ void loop() {
           client.println();
           // client.println("<!DOCTYPE HTML>");
           client.print("<html><body style='display: flex; align-items: center; justify-content: center;'><h1 style='text-align: center; vertical-align:middle; font-size: 72px'>");
-           
-          // ********************** GET START **************************
-         
-
-          // client.println("<FORM ACTION=\"http://192.168.2.177:12358\" method=get >");
-
-          // client.println("Pin 5 \"on\" or \"off\": <INPUT TYPE=TEXT NAME=\"LED\" VALUE=\"\" SIZE=\"25\" MAXLENGTH=\"50\">");
-          // client.println("<INPUT TYPE=SUBMIT NAME=\"submit\" VALUE=\"Change Pin 7!\"><BR><BR>");           
-            
-          // client.println("<INPUT TYPE=SUBMIT NAME=\"ON\" VALUE=\"on\"><INPUT TYPE=SUBMIT NAME=\"OFF\" VALUE=\"off\"></FORM>");
-
-          // ********************** GET ENDE **************************
           
           if (motionDetectionState == LOW)
             if (motionStateCurrent == HIGH)
@@ -167,7 +154,9 @@ void loop() {
     // Serial.println("client disconnected");
  
   }
-      // ********************** ALARM START **************************
+    
+  
+  // ********************** ALARM START **************************
     
     motionStatePrevious = motionStateCurrent;             // store old state
     motionStateCurrent  = digitalRead(MOTION_SENSOR_PIN); // read new state
@@ -191,5 +180,5 @@ void loop() {
     else
       digitalWrite(WARNING_PIN, LOW);   // turn off
 
-    // ********************** ALARM STOP ***************************
+    // ********************** ALARM ENDE ***************************
 }
