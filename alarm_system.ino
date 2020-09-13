@@ -1,33 +1,34 @@
 /*
   Alarm system  
 */
-
 #include <UIPEthernet.h>
 
-// Enter a MAC address and IP address for your controller below.
-// The IP address will be dependent on your local network:
-byte mac[] = {
-  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
-};
-IPAddress ip(192, 168, 2, 177);
-
-// Initialize the Ethernet server library
-// with the IP address and port you want to use
-// (port 80 is default):
+// change to your IP
+IPAddress ip(192, 168, 2, 1); 
+// change to your port
 EthernetServer server(12358);
+// redirect to your cam
+const char video_redirect[] = "https://www.activcam.de/";
 
-const int ONOFF_LED_PIN     = 7;   // Arduino pin connected to the OUTPUT pin of on/off led
-const int MOTION_LED_PIN    = 5;   // Arduino pin connected to the OUTPUT pin of motion led
-const int MOTION_SENSOR_PIN = 8;   // Arduino pin connected to the OUTPUT pin of motion sensor
-const int DOOR_SENSOR_PIN   = 6;   // Arduino pin connected to the door sensor
-const int WARNING_PIN       = 4;   // Arduino pin connected to the IN pin of relay (warning flash)
-const int ALERT_PIN         = 3;   // Arduino pin connected to the IN pin of relay (alarm siren)
-int motionStateCurrent      = LOW; // current  state of motion sensor's pin
-int motionStatePrevious     = LOW; // previous state of motion sensor's pin
-int motionDetectionState    = LOW; // motion detection on (HIGH) /off (LOW)
-int doorLockState           = HIGH;// door locked (LOW) / unlocked (HIGH) 
-int alertCounter            = 0;   // count motion detection 
-int maxMotionAlert          = 1;   // set alert counter limit
+const byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
+
+// Input
+const int MOTION_SENSOR_PIN = 4;    // Arduino pin connected to the IN pin of motion sensor
+const int DOOR_SENSOR_PIN   = 3;    // Arduino pin connected to the IN pin of door sensor
+
+// Output
+const int ONOFF_LED_PIN     = 6;    // Arduino pin connected to the on/off led
+const int MOTION_LED_PIN    = 7;    // Arduino pin connected to the motion led
+const int ALERT_PIN         = 8;    // Arduino pin connected to the relay (alarm siren)
+const int UNLOCKED_PIN      = 9;    // Arduino pin connected to the relay (warning flash)
+
+// State
+int motionStateCurrent      = LOW;  // current  state of motion sensor's pin
+int motionStatePrevious     = LOW;  // previous state of motion sensor's pin
+int motionDetectionState    = LOW;  // motion detection on (HIGH) /off (LOW)
+int doorLockState           = HIGH; // door locked (LOW) / unlocked (HIGH) 
+int alertCounter            = 0;    // count motion detection 
+int maxMotionAlert          = 1;    // set alert limit
 
 void setup() {
 
@@ -36,14 +37,19 @@ void setup() {
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
-  Serial.println("Ethernet WebServer Example");
+  Serial.println("Ethernet WebServer");
 
   pinMode(ONOFF_LED_PIN, OUTPUT);
   pinMode(MOTION_LED_PIN, OUTPUT);
-  pinMode(MOTION_SENSOR_PIN, INPUT);        // set arduino pin to input mode
-  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);   // set arduino pin to input_pullup mode
-  pinMode(ALERT_PIN, OUTPUT);               // set arduino pin to output mode
-  pinMode(WARNING_PIN, OUTPUT);             // set arduino pin to output mode
+  pinMode(ALERT_PIN, OUTPUT);               
+  pinMode(UNLOCKED_PIN, OUTPUT);            
+  pinMode(MOTION_SENSOR_PIN, INPUT);        
+  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);   
+
+  digitalWrite(ONOFF_LED_PIN, LOW);
+  digitalWrite(MOTION_LED_PIN, LOW);
+  digitalWrite(ALERT_PIN, LOW);
+  digitalWrite(UNLOCKED_PIN, LOW);
 
   // start the Ethernet connection and the server:
   Ethernet.begin(mac, ip);
@@ -53,7 +59,6 @@ void setup() {
   Serial.print("server is at ");
   Serial.println(Ethernet.localIP());
 }
-
 
 void loop() {
   // listen for incoming clients
@@ -80,32 +85,32 @@ void loop() {
           // send a standard http response header
           client.println("HTTP/1.1 200 OK");
           client.println("Content-Type: text/html");
-          // client.println("Content-Type: text/plain");
           client.println("Connection: close");  // the connection will be closed after completion of the response
-          client.println("Refresh: 3");  // refresh the page automatically every x sec
           client.println();
-          // client.println("<!DOCTYPE HTML>");
-          client.print("<html><body style='display: flex; align-items: center; justify-content: center;'><h1 style='text-align: center; vertical-align:middle; font-size: 72px'>");
           
-          if (motionDetectionState == LOW)
+          client.print("<html><head><meta http-equiv='Refresh' content='0; url=");
+          client.print(video_redirect);
+          client.print("' /></head><body>");
+          
+          if (motionDetectionState == LOW){
+            client.print("alarm off");
             if (motionStateCurrent == HIGH)
-              client.print("alarm off - motion");
+              client.print(", motion detected");
             else 
               if (doorLockState == HIGH)
-                client.print("alarm off - lock door");
-              else
-                client.print("detection off");
+                client.print(", door unlocked");
+          }
           else
             if (motionStateCurrent == HIGH)
-            {
-                client.print("motion alert ");
-                client.print(alertCounter);     
+            {   
+                client.print("motion alert");     
             }
             else
               if (doorLockState == HIGH) 
                 client.print("door alert");
               else
                 client.print("detection on");
+                
           break;
         }
         if (c == '\n') {
@@ -140,12 +145,12 @@ void loop() {
       digitalWrite(ONOFF_LED_PIN, LOW);   // set pin 5 low
       digitalWrite(MOTION_LED_PIN, LOW);  // set pin 5 low
       digitalWrite(ALERT_PIN, LOW);       // turn off
-      digitalWrite(WARNING_PIN, LOW);     // turn off
+      digitalWrite(UNLOCKED_PIN, LOW);     // turn off
     }
     //clearing string for next read
     readString="";
 
-    client.print("</h1></body></html>");
+    client.print("</body></html>");
 
     // give the web browser time to receive the data
     delay(1);
@@ -154,9 +159,7 @@ void loop() {
     // Serial.println("client disconnected");
  
   }
-    
-  
-  // ********************** ALARM START **************************
+      // ********************** ALARM START **************************
     
     motionStatePrevious = motionStateCurrent;             // store old state
     motionStateCurrent  = digitalRead(MOTION_SENSOR_PIN); // read new state
@@ -171,14 +174,15 @@ void loop() {
     }
     else
     if (motionStatePrevious == HIGH && motionStateCurrent == LOW) { // pin state change: HIGH -> LOW
+      digitalWrite(MOTION_LED_PIN, LOW);  // turn off
       digitalWrite(ALERT_PIN, LOW);  // turn off
     }
 
     // unauthorised door unlock ?
     if (doorLockState == HIGH && motionDetectionState == HIGH)
-      digitalWrite(WARNING_PIN, HIGH);  // turn on
+      digitalWrite(UNLOCKED_PIN, HIGH);  // turn on
     else
-      digitalWrite(WARNING_PIN, LOW);   // turn off
+      digitalWrite(UNLOCKED_PIN, LOW);   // turn off
 
-    // ********************** ALARM ENDE ***************************
+    // ********************** ALARM STOP ***************************
 }
