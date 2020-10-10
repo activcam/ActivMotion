@@ -1,3 +1,3 @@
-# ActivMotion
-ESP8266 alarm system with "motion"-like webcontrol
-for use with ActivCam
+# Locker room alarm
+
+ESP8266 based alarm system, controlled by the ActivCam app for Android
