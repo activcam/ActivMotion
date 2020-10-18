@@ -1,5 +1,5 @@
 /*
-  Alarm system  
+  Simple alarm system
 
   IMPORTANT NOTES ABOUT SSL CERTIFICATES
 
@@ -21,6 +21,10 @@
     have to manully allow the browser to continue by using the
     "Advanced/Add Exception" (FireFox) or "Advanced/Proceed" (Chrome) link.
 
+    Run hexdump -e '16/1 "%02x " "\n"' <filename> > output.txt to open the file and save it 
+    onto a file called output.txt. You can then open this output.txt file 
+    separately and view it.
+
     You may also, of course, use a commercial, trusted SSL provider to
     generate your certificate.  When requesting the certificate, you'll
     need to specify that it use SHA256 and 1024 or 512 bits in order to
@@ -33,13 +37,13 @@
   To upload through terminal you can use:
   curl -u admin:admin -F "image=@firmware.bin" esp8266-webupdate.local/firmware
 
-  Adapted by Jens Schreck. Thanks to Earle F. Philhower for sample WifiHTTPSServer, adapted from the HelloServer.ino example.
-  
+  Adapted by Jens Schreck. Thanks to Earle F. Philhower for sample WifiHTTPSServer, 
+  adapted from the HelloServer.ino example.
 */
 
 #include <ESP8266WiFi.h>
-#include <WiFiClient.h>
 #include <ESP8266WebServerSecure.h>
+#include <ESP8266HTTPClient.h> 
 #include <ESP8266mDNS.h>
 
 #ifndef STASSID
@@ -47,14 +51,16 @@
 #define STAPSK    "wifi-password"
 #define USERID    "www-user"
 #define PASSWD    "www-password"
-#define HOME      "<html><head><meta http-equiv=\"refresh\" content=\"0; url=https://www.activcam.de/\" /></head><body></body></html>"
+#define REDIRECT  "https://esp8266.activcam.de/"
+#define PUSHURL   "https://alert.activcam.de/fcm.php?id=<device id>"
+#define PORT      8090
 #endif 
 
 const char* ssid = STASSID;
 const char* password = STAPSK;
 const char* www_username = USERID;
 const char* www_password = PASSWD;
-const char* homepage = HOME; 
+const char* redirect_url = REDIRECT;
 
 const char* http900  = "Lock the door";
 const char* http901  = "Leave the room";
@@ -62,8 +68,7 @@ const char* http999  = "Motion detected";
 const char* txtpause = "Detection status pause";
 const char* txtstart = "Detection status activ";
 
-
-ESP8266WebServerSecure server(443);
+ESP8266WebServerSecure server(PORT);
 
 // The certificate is stored in PMEM
 static const uint8_t x509[] PROGMEM = {
@@ -128,11 +133,11 @@ static const uint8_t rsakey[] PROGMEM = {
 };
 
 // Input
-const int MOTION_SENSOR_PIN = 14;    // Arduino pin connected to the IN pin of motion sensor
-const int DOOR_SENSOR_PIN   = 12;    // Arduino pin connected to the IN pin of door sensor
+const int MOTION_SENSOR_PIN = 14;   // Arduino pin connected to the IN pin of motion sensor
+const int DOOR_SENSOR_PIN   = 12;   // Arduino pin connected to the IN pin of door sensor
 
 // Output
-const int ONOFF_LED_PIN     = 16;    // Arduino pin connected to the on/off led
+const int ONOFF_LED_PIN     = 16;   // Arduino pin connected to the on/off led
 const int MOTION_LED_PIN    = 5;    // Arduino pin connected to the motion led
 const int ALERT_PIN         = 4;    // Arduino pin connected to the relay (alarm siren)
 const int UNLOCKED_PIN      = 0;    // Arduino pin connected to the relay (warning flash)
@@ -144,144 +149,3 @@ int motionDetectionState    = LOW;  // motion detection on (HIGH) /off (LOW)
 int doorLockState           = HIGH; // door locked (LOW) / unlocked (HIGH) 
 int alertCounter            = 0;    // count motion detection 
 int maxMotionAlert          = 1;    // set alert limit
-
-void handleStatus() {
-      if (!server.authenticate(www_username, www_password)) {
-          return server.requestAuthentication();
-        }       
-      String page; 
-      if (motionDetectionState == LOW)
-        page = txtpause;
-      else {
-        if (motionStateCurrent == LOW)
-            page = txtstart;
-        else {
-            server.send(999, "text/plain", http999);
-            return;
-        }
-      }      
-      server.send(200, "text/plain", page);
-}
-
-void handleHome() {     
-      server.send(200, "text/html", homepage);
-}
-
-void handleNotFound() {
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  server.send(404, "text/plain", message);
-}
-
-void setup(void) {
-
-  Serial.begin(115200);
-
-  Serial.print("Initialize PINs");
-  pinMode(ONOFF_LED_PIN, OUTPUT);
-  pinMode(ONOFF_LED_PIN, OUTPUT);
-
-  pinMode(MOTION_LED_PIN, OUTPUT);
-  pinMode(ALERT_PIN, OUTPUT);               
-  pinMode(UNLOCKED_PIN, OUTPUT);            
-  pinMode(MOTION_SENSOR_PIN, INPUT);        
-  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);   
-
-  digitalWrite(ONOFF_LED_PIN, LOW);
-  digitalWrite(MOTION_LED_PIN, LOW);
-  digitalWrite(ALERT_PIN, LOW);
-  digitalWrite(UNLOCKED_PIN, LOW);
-  
-  WiFi.begin(ssid, password);
-  Serial.println("");
-
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  if (MDNS.begin("esp8266")) {
-    Serial.println("MDNS responder started");
-  }
-
-  server.getServer().setServerKeyAndCert_P(rsakey, sizeof(rsakey), x509, sizeof(x509));
-
-  server.on("/0/detection/start", []() {
-    if (!server.authenticate(www_username, www_password)) {
-          return server.requestAuthentication();
-        }
-    if (doorLockState == HIGH) {
-      server.send(900, "text/plain", http900);
-      return;
-    }
-    if (motionStateCurrent == HIGH) {
-      server.send(901, "text/plain", http901);
-      return;
-    }
-    motionDetectionState = HIGH;
-    digitalWrite(ONOFF_LED_PIN, HIGH);  
-    server.send(200, "text/plain", "No Content");
-  });
-
-  server.on("/0/detection/pause", []() {
-    if (!server.authenticate(www_username, www_password)) {
-          return server.requestAuthentication();
-        }
-    motionDetectionState = LOW;
-    digitalWrite(ALERT_PIN, LOW);
-    digitalWrite(ONOFF_LED_PIN, LOW);  
-    digitalWrite(MOTION_LED_PIN, LOW);
-    server.send(200, "text/plain", "No Content");
-  });
-
-  server.on("/0/detection/status", handleStatus);
-  server.on("/", handleHome);
-  server.onNotFound(handleNotFound);
-
-  server.begin();
-  Serial.println("HTTPS server started");
-}
-
-void loop(void) {
-  server.handleClient();
-  MDNS.update();
-   
-    motionStatePrevious = motionStateCurrent;             // store old state
-    motionStateCurrent  = digitalRead(MOTION_SENSOR_PIN); // read new state
-    doorLockState = digitalRead(DOOR_SENSOR_PIN);         
-  
-    // unauthorised entry ?
-    if (motionStatePrevious == LOW && motionStateCurrent == HIGH && motionDetectionState == HIGH) { // pin state change: LOW -> HIGH
-      digitalWrite(MOTION_LED_PIN, HIGH); // turn on
-      if (alertCounter < maxMotionAlert) 
-        digitalWrite(ALERT_PIN, HIGH); // turn on
-      alertCounter = alertCounter + 1;
-    }
-    else
-    if (motionStatePrevious == HIGH && motionStateCurrent == LOW) { // pin state change: HIGH -> LOW
-      digitalWrite(MOTION_LED_PIN, LOW);  // turn off
-      digitalWrite(ALERT_PIN, LOW);  // turn off
-    }
-
-    // door locked ?
-    if (doorLockState == HIGH && motionDetectionState == HIGH)
-      digitalWrite(UNLOCKED_PIN, HIGH);  // turn on
-    else
-      digitalWrite(UNLOCKED_PIN, LOW);   // turn off
-
-}
