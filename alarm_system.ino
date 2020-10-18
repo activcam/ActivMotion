@@ -149,3 +149,212 @@ int motionDetectionState    = LOW;  // motion detection on (HIGH) /off (LOW)
 int doorLockState           = HIGH; // door locked (LOW) / unlocked (HIGH) 
 int alertCounter            = 0;    // count motion detection 
 int maxMotionAlert          = 1;    // set alert limit
+
+void setup(void) {
+
+  Serial.begin(115200);
+  
+  Serial.print("Initialize PINs");
+  pinMode(ONOFF_LED_PIN, OUTPUT);
+  pinMode(ONOFF_LED_PIN, OUTPUT);
+
+  pinMode(MOTION_LED_PIN, OUTPUT);
+  pinMode(ALERT_PIN, OUTPUT);               
+  pinMode(UNLOCKED_PIN, OUTPUT);            
+  pinMode(MOTION_SENSOR_PIN, INPUT);        
+  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);   
+
+  digitalWrite(ONOFF_LED_PIN, LOW);
+  digitalWrite(MOTION_LED_PIN, LOW);
+  digitalWrite(ALERT_PIN, LOW);
+  digitalWrite(UNLOCKED_PIN, LOW);
+  
+  WiFi.begin(ssid, password);
+  Serial.println("");
+
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin("esp8266")) {
+    Serial.println("MDNS responder started");
+  }
+
+  server.getServer().setServerKeyAndCert_P(rsakey, sizeof(rsakey), x509, sizeof(x509));
+
+  server.on("/0/detection/start", []() {
+    if (!server.authenticate(www_username, www_password)) {
+          return server.requestAuthentication();
+        }
+    // alarm system will be activated only if door is locked
+    if (doorLockState == HIGH) {
+      server.send(900, "text/plain", http900);
+      return;
+    }
+    // alarm system will be activated only if no current motion
+    if (motionStateCurrent == HIGH) {
+      server.send(901, "text/plain", http901);
+      return;
+    }
+    motionDetectionState = HIGH;
+    digitalWrite(ONOFF_LED_PIN, HIGH);  
+    String page; 
+    if (motionDetectionState == LOW)
+      page = txtpause;
+    else {
+      if (motionStateCurrent == LOW)
+          page = txtstart;
+      else {
+          server.send(999, "text/plain", http999);
+          return;
+      }
+    }      
+    server.send(200, "text/plain", page);
+  });
+
+  server.on("/0/detection/pause", []() {
+    if (!server.authenticate(www_username, www_password)) {
+          return server.requestAuthentication();
+        }
+    motionDetectionState = LOW;
+    digitalWrite(ALERT_PIN, LOW);
+    digitalWrite(ONOFF_LED_PIN, LOW);  
+    digitalWrite(MOTION_LED_PIN, LOW);
+    String page; 
+    if (motionDetectionState == LOW)
+      page = txtpause;
+    else {
+      if (motionStateCurrent == LOW)
+          page = txtstart;
+      else {
+          server.send(999, "text/plain", http999);
+          return;
+      }
+    }      
+    server.send(200, "text/plain", page);
+  });
+
+  server.on("/0/detection/status", handleStatus);
+  server.on("/", handleHome);
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+  Serial.println("HTTPS server started");
+    
+}
+
+void handleHome() {     
+  char homepage[1024] = "<html><head><meta http-equiv=\"refresh\" content=\"0; url=";
+  // for compatibility with linux motion-project, redirection to a netcam or website
+  strcat(homepage,redirect_url);
+  // for compatibility with linux motion-project version parsing (see ActivCam App)
+  strcat(homepage,"\" /></head><body><p class=\"header-right\">Motion AC</p></body></html>"); 
+  Serial.println(homepage);
+  server.send(200, "text/html", homepage);
+}
+
+void handleStatus() {
+      if (!server.authenticate(www_username, www_password)) {
+          return server.requestAuthentication();
+        }       
+      String page; 
+      if (motionDetectionState == LOW)
+        page = txtpause;
+      else {
+        if (motionStateCurrent == LOW)
+            page = txtstart;
+        else {
+            server.send(999, "text/plain", http999);
+            return;
+        }
+      }      
+      server.send(200, "text/plain", page);
+}
+
+void handleNotFound() {
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint8_t i = 0; i < server.args(); i++) {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  server.send(404, "text/plain", message);
+}
+
+void loop(void) {
+  server.handleClient();
+  MDNS.update();
+  
+  //********************** ALARM START **************************
+    
+  motionStatePrevious = motionStateCurrent;             // store old state
+  motionStateCurrent  = digitalRead(MOTION_SENSOR_PIN); // read new state
+  doorLockState = digitalRead(DOOR_SENSOR_PIN);         
+
+  // unauthorised entry ?
+  if (motionStatePrevious == LOW && motionStateCurrent == HIGH && motionDetectionState == HIGH) { // pin state change: LOW -> HIGH
+    digitalWrite(MOTION_LED_PIN, HIGH); // turn on
+    if (alertCounter < maxMotionAlert) 
+      digitalWrite(ALERT_PIN, HIGH); // turn on
+      
+      const char* push_url = PUSHURL; 
+      std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+      
+      //client->setFingerprint(fingerprint);
+      client->setInsecure();
+      
+      HTTPClient https;
+      
+        Serial.print("[HTTPS] begin...\n");
+        if (https.begin(*client, push_url)) {  // HTTPS
+      
+          Serial.print("[HTTPS] GET...\n");
+          // start connection and send HTTP header
+          int httpCode = https.GET();
+      
+          // httpCode will be negative on error
+          if (httpCode > 0) {
+            // HTTP header has been send and Server response header has been handled
+            Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+      
+            // file found at server
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+              String payload = https.getString();
+              Serial.println(payload);
+            }
+          } else {
+            Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+          }
+          https.end();
+         
+        } else {
+          Serial.printf("[HTTPS] Unable to connect\n");
+        }
+    alertCounter = alertCounter + 1;
+  }
+  else
+  if (motionStatePrevious == HIGH && motionStateCurrent == LOW) { // pin state change: HIGH -> LOW
+    digitalWrite(MOTION_LED_PIN, LOW);  // turn off
+    digitalWrite(ALERT_PIN, LOW);  // turn off
+  }
+
+  // unauthorised door unlock ?
+  if (doorLockState == HIGH && motionDetectionState == HIGH)
+    digitalWrite(UNLOCKED_PIN, HIGH);  // turn on
+  else
+    digitalWrite(UNLOCKED_PIN, LOW);   // turn off
+ 
+  // ********************** ALARM STOP ***************************
+}
